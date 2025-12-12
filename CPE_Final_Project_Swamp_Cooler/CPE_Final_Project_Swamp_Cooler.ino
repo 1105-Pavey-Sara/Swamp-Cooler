@@ -2,7 +2,6 @@
 //CPE Swamp Cooler Final Project
 //12-12-2025
 #include <LiquidCrystal.h> //lcd
-#include <Stepper.h> //fan
 #include <DHT.h> //temperature
 #include <DHT_U.h> //temperature
 #include <RTClib.h> //clock/time
@@ -87,7 +86,7 @@ void fanOn();
 void updateState(state);
 void logMotor();
 void logTime();
-void stepMotor(char k);
+void stepMotor();
 
 void setup() {
   *ddr_b |= (1 << PB7); //configure pin 13 as output, IN4
@@ -133,7 +132,7 @@ void setup() {
 
 void loop() {
   char k = keypad.getKey();
-  char lastk = 0;
+  static char lastk = 0;
   if (k == '1'){ //1 = Stop button: turn motor off (if on) and disable system
     updateState(DISABLED);
   }
@@ -153,40 +152,51 @@ void loop() {
     case IDLE: 
       if (!waterThreshold()){
         updateState(ERROR);
-        /*add these later: RTC timestamp*/
       }
       else if(tempThreshold()){ 
         updateState(RUNNING);
       }
       displayLCDInfo(activeState);
-     if(k != lastk && lastk == 0){ //If a new button press on keypad run step motor function
-      stepMotor(k);
-     }
+      if (k != 0 && k != lastk){//If a new button press on keypad run step motor function
+        stepMotor(k);
+        lastk = k;
+      }
+      if (k == 0){
+        lastk = 0;
+      }
+
       break;
     case ERROR:
       //Error message
       displayLCDInfo(activeState);
-      if(k != lastk && lastk == 0){ //If a new button press on keypad run step motor function
-      stepMotor(k);
+      if (k != 0 && k != lastk){//If a new button press on keypad run step motor function
+        stepMotor(k);
+        lastk = k;
+      }
+      if (k == 0){
+        lastk = 0;
       }
       break;
     case RUNNING:
       if (!waterThreshold()){
         updateState(ERROR);
-        /*add these later: RTC timestamp*/
       }else if(!tempThreshold()){ 
         updateState(IDLE);
       }
       displayLCDInfo(activeState);
-     if(k != lastk && lastk == 0){ //If a new button press on keypad run step motor function
-      stepMotor(k);
-     }
+      if (k != 0 && k != lastk){//If a new button press on keypad run step motor function
+        stepMotor(k);
+        lastk = k;
+      }
+      if (k == 0){
+        lastk = 0;
+      }
       break;
   }
   //ArduinoDocs: Minute Loop
   if (activeState != DISABLED){
     unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= LCD_INTERVAL){
+    if (currentMillis - previousMillis >= interval){
       previousMillis = currentMillis;
       displayLCDInfo(activeState);
     }
@@ -237,7 +247,7 @@ static void U0putint_recursive(unsigned int n){ //lab 8 printing
     if (n == 0) {
         return;
     }
-    U0putint_rec(n / 10);
+    U0putint_recursive(n / 10);
     U0putchar((n % 10) + '0');
 }
 
@@ -247,7 +257,7 @@ void U0putint(unsigned int n1){
         U0putchar('0');
         return;
     }
-    U0putint_rec(n1);
+    U0putint_recursive(n1);
 }
 
 void U0init(int U0baud){
@@ -432,34 +442,63 @@ void logTime(){
 }
 
 void stepMotor(char k){
-  if(k == '3'){
-   motorstate += 1;
-  } 
-  if(k == '4'){
-   motorstate -= 1;
+
+  if(activeState == DISABLED){
+    return;
   }
- if(motorstate == 0){
-  *port_b |= (1 << PB7); //Send a 1 to set stepper motor to 0 position
-  *port_b &= ~(1 << PB6); //Send a 0 to set stepper motor to 0 position
-  *port_b &= ~(1 << PB5); //Send a 0 to set stepper motor to 0 position
-  *port_b &= ~(1 << PB4); //Send a 0 to set stepper motoe to 0 position
- }
- if(motorstate == 0){
-  *port_b &= ~(1 << PB7); //Send a 0 to set stepper motor to 0 position
-  *port_b |= (1 << PB6); //Send a 1 to set stepper motor to 0 position
-  *port_b &= ~(1 << PB5); //Send a 0 to set stepper motor to 0 position
-  *port_b &= ~(1 << PB4); //Send a 0 to set stepper motor to 0 position
- }
- if(motorstate == 0){
-  *port_b &= ~(1 << PB7); //Send a 0 to set stepper motor to 0 position
-  *port_b &= ~(1 << PB6); //Send a 0 to set stepper motor to 0 position
-  *port_b |= (1 << PB5); //Send a 1 to set stepper motor to 0 position
-  *port_b &= ~(1 << PB4); //Send a 0 to set stepper motor to 0 position
- }
- if(motorstate == 0){
-  *port_b &= ~(1 << PB7); //Send a 0 to set stepper motor to 0 position
-  *port_b &= ~(1 << PB6); //Send a 0 to set stepper motor to 0 position
-  *port_b &= ~(1 << PB5); //Send a 0 to set stepper motor to 0 position
-  *port_b |= (1 << PB4); //Send a 1 to set stepper motor to 1 position
- }
+
+  if(k == '3'){ //press 3 on matrix
+    motorstate++;
+  } 
+  if(k == '4'){ //press 4 on matrix
+    motorstate--;
+  }
+
+  if (motorstate > 3){
+    motorstate = 0;
+  }
+  else if (motorstate < 0){
+    motorstate = 3;
+  }
+
+  logTime();
+  U0putchar('V');
+  U0putchar('e');
+  U0putchar('n');
+  U0putchar('t');
+  U0putchar(':');
+  U0putchar(' ');
+
+  if(k == '3'){
+    U0putchar('L'); //Check if pressing 3 actually moves it left when testing circuit.
+  }else if(k == '4'){
+    U0putchar('R');
+  }
+  U0putchar(' ');
+  U0putchar('P');
+  U0putchar('o');
+  U0putchar('s');
+  U0putchar(':');
+  U0putchar(' ');
+
+  switch(motorstate){
+    case 0:
+      *port_b = (*port_b & 0x0F) | 0b10000000;
+      U0putchar('0');
+      break;
+    case 1:
+      *port_b = (*port_b & 0x0F) | 0b01000000;
+      U0putchar('1');
+      break;
+    case 2:
+      *port_b = (*port_b & 0x0F) | 0b00100000;
+      U0putchar('2');
+      break;
+    case 3:
+      *port_b = (*port_b & 0x0F) | 0b00010000;
+      U0putchar('3');
+      break;
+    }
+
+    U0putchar('\n');
 }
