@@ -93,6 +93,8 @@ void setup() {
   *ddr_a |= (1 << PA6); // configure pin 28 as output, green LED
   *ddr_f &= ~(1 << PF1); // configure pin A1 as input, temp sensor
   *ddr_f &= ~(1 << PF2); //configure pin A2 as input, water sensor data/S
+ LiquidCrystal(8, 7, 6, 5, 4, 3); //Setup LCD in 4 pin mode
+ lcd.begin(16, 2); //clear and set position to (0,0)
 
   U0init(9600);
 
@@ -123,6 +125,8 @@ void loop() {
         startPress = false;
         activeState = IDLE;
       }
+    *port_h &= ~(1 << PH6); //Send a zero to pin 9 turning the motor off
+     
       break;
     case IDLE:
       setLED(activeState); //set LED to green
@@ -133,12 +137,17 @@ void loop() {
       else if(tempThreshold()){ /* may need to add checking water threshold to logic? will check physically later*/
         activeState = RUNNING;
       }
+     *port_h &= ~(1 << PH6); //Send a zero to pin 9 turning the motor off
+     lcd.print(getTemperature()); //Display the temperature in the top left corner
+     lcd.setCursor(0, 1); //Set Cursor to second row
+     //lcd.print(Humidity) // Print whatever the humidity level is
       break;
     case ERROR:
       setLED(activeState); //set LED to red
       if(/*write code to link this with button for reset above*/ && waterThreshold()) {
         activeState = IDLE;
       }
+     *port_h &= ~(1 << PH6); //Send a zero to pin 9 turning the motor off
       break;
     case RUNNING:
       setLED(activeState); //set LED to blue
@@ -148,6 +157,10 @@ void loop() {
       }else if(!tempThreshold()){ /* may need to add checking water threshold to logic? will check physically later*/
         activeState = IDLE;
       }
+     *port_h |= (1 << PH6); //Send a 1 to pin 9 turning the motor on
+     lcd.print(getTemperature()); //Display the temperature in the top left corner
+     lcd.setCursor(0, 1); //Set Cursor to second row
+     //lcd.print(Humidity) // Print whatever the humidity level is
       break;
   }
 }
