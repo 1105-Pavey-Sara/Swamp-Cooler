@@ -1,9 +1,20 @@
 //Sara Pavey and Luka Wozniak
 //CPE Swamp Cooler Final Project
 //12-12-2025
+#include <LiquidCrystal.h>
+#include <Stepper.h>
+#include <DHT.h>
+#include <DHT_U.h>
+#include <RTClib.h>
+#include <Keypad.h>
 
 #define RDA 0x80
 #define TBE 0x20  
+
+#define TEMP_ADC_CH 1
+#define WATER_ADC_CH 2
+
+#define WATER_THRESHOLD 250 //chosen to mimic lab 8
 
 volatile unsigned char *myUCSR0A = (unsigned char *)0x00C0;
 volatile unsigned char *myUCSR0B = (unsigned char *)0x00C1;
@@ -16,46 +27,101 @@ volatile unsigned char* my_ADCSRB = (unsigned char*) 0x7B;
 volatile unsigned char* my_ADCSRA = (unsigned char*) 0x7A;
 volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78;
 
+volatile unsigned char* ddr_b = (unsigned char*) 0x24; 
+volatile unsigned char* port_b = (unsigned char*) 0x25; 
+volatile unsigned char* ddr_h = (unsigned char*) 0x101; 
+volatile unsigned char* port_h = (unsigned char*) 0x102;
+volatile unsigned char* ddr_e = (unsigned char*) 0x2D;
+volatile unsigned char* port_e = (unsigned char*) 0x2E;
+volatile unsigned char* ddr_g = (unsigned char*) 0x33;
+volatile unsigned char* port_g = (unsigned char*) 0x34;
+volatile unsigned char* ddr_a = (unsigned char*) 0x21;
+volatile unsigned char* port_a = (unsigned char*) 0x22;
+volatile unsigned char* ddr_f = (unsigned char*) 0x30;
+volatile unsigned char* port_f = (unsigned char*) 0x31;
+
+
+volatile bool startPress = false; //start button
+const byte ROWS = 4; 
+const byte COLS = 4;
+char startKeypad[ROWS][COLS] = {
+  {'1','2','3','A'},
+  {'4','5','6','B'},
+  {'7','8','9','C'},
+  {'*','0','#','D'}
+};
+byte rowPins[ROWS] = {30, 32, 34, 36};
+byte colPins[COLS] = {38, 40, 42, 44};
+Keypad keypad = Keypad(makeKeymap(startKeypad), rowPins, colPins, ROWS, COLS);
+
+typedef enum {DISABLED, IDLE, ERROR, RUNNING} state;
+volatile STATE activeState = DISABLED; //System will not start off running the cooler 
+
 void adc_init();
 unsigned int adc_read(unsigned char);
 void U0putchar(unsigned char);
-void U0Init(int);
+void U0init(int);
+void setLED(state);
+void startbuttonISR();
 
 void setup() {
-  unsigned char* ddr_b = (unsigned char*) 0x24; //Memory Mapped I/O
-  unsigned char* port_b = (unsigned char*) 0x25; 
-  unsigned char* ddr_h = (unsigned char*) 0x101;
-  unsigned char* port_h = (unsigned char*) 0x102;
-  unsigned char* ddr_e = (unsigned char*) 0x2D;
-  unsigned char* port_e = (unsigned char*) 0x2E;
-  unsigned char* ddr_g = (unsigned char*) 0x33;
-  unsigned char* port_g = (unsigned char*) 0x34;
-  unsigned char* ddr_a = (unsigned char*) 0x21;
-  unsigned char* port_a = (unsigned char*) 0x22;
-  unsigned char* ddr_f = (unsigned char*) 0x30;
-  unsigned char* port_f = (unsigned char*) 0x31;
   *ddr_b |= (1 << PB7); //configure pin 13 as output, IN4
   *ddr_b |= (1 << PB6); //configure pin 12 as output, IN3
   *ddr_b |= (1 << PB5); //configure pin 11 as output, IN2
   *ddr_b |= (1 << PB4); //configure pin 10 as output, IN1
-  *ddr_h |= (1 << PH6); //configure pin 9 as output, breadboard
+  *ddr_h |= (1 << PH6); //configure pin 9 as output, motor
   *ddr_h |= (1 << PH5); //configure pin 8 as output, LCD RS
   *ddr_h |= (1 << PH4); //configure pin 7 as output, LCD E
   *ddr_h |= (1 << PH3); //configure pin 6 as output, LCD D4
   *ddr_e |= (1 << PE3); //configure pin 5 as output, LCD D5
   *ddr_g |= (1 << PG5); //configure pin 4 as output, LCD D6
   *ddr_e |= (1 << PE5); //configure pin 3 as output, LCD D7
-  *ddr_e &= ~(1 << PE4); //configure pin 2 as input, water sensor data/S
   *ddr_a |= (1 << PA0); // configure pin 22 as output, blue LED
   *ddr_a |= (1 << PA2); // configure pin 24 as output, red LED
   *ddr_a |= (1 << PA4); // configure pin 26 as output, yellow LED
   *ddr_a |= (1 << PA6); // configure pin 28 as output, green LED
   *ddr_f &= ~(1 << PF1); // configure pin A1 as input, temp sensor
+  *ddr_f &= ~(1 << PF2); //configure pin A2 as input, water sensor data/S
+
+  U0init(9600);
+
+  adc_init();
+
+  *ddr_e &= ~(1 << PE4); //configure pin 2 as input, Start ISR Button
+  attachInterrupt(digitalPinToInterrupt(2), startISR, FALLING);
+
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-
+  char k = keypad.getKey();
+  if (k == '1'){ //1 = Stop button: turn motor off (if on) and disable system
+    /*code to turn off fan, make function*/
+    activeState = DISABLED;
+  }
+  else if(activeState == ERROR && k == '2'){ //2 = Reset button
+    if (/*write code: check if water above threshold*/){
+      activeState = IDLE;
+    } 
+  }
+  switch(activeState){
+    case DISABLED:
+      setLED(activeState); //set LED to yellow
+      if(startPress){
+        startPress = false;
+        activeState = IDLE;
+      }
+      break;
+    case IDLE:
+      setLED(activeState); //set LED to green
+      /* if/else statement with water level input, if too low, change to error state*/
+      break;
+    case ERROR:
+      setLED(activeState); //set LED to red
+      break;
+    case RUNNING:
+      setLED(activeState); //set LED to blue
+      break;
+  }
 }
 
 void adc_init(){
@@ -97,7 +163,7 @@ void U0putchar(unsigned char U0pdata){
   *myUDR0 = U0pdata;
 }
 
-void U0Init(int U0baud){
+void U0init(int U0baud){
 
   unsigned long FCPU = 16000000;
   unsigned int tbaud;
@@ -108,4 +174,30 @@ void U0Init(int U0baud){
   *myUCSR0C = 0x06;
   *myUBRR0  = tbaud;
 }
+
+void setLED(state ledstate){
+
+  *port_a &= ~((1 << PA0) | (1 << PA2) | (1 << PA4) | (1 << PA6)); //clearing LEDS out
+
+  switch(ledstate){
+    case DISABLED:
+      *port_a |= (1 << PA4); //yellow
+      break;
+    case IDLE:
+      *port_a |= (1 << PA6); //green
+      break;
+    case ERROR:
+      *port_a |= (1 << PA2); //red
+      break;
+    case RUNNING:
+      *port_a |= (1 << PA0); //blue
+      break;
+  }
+}
+
+void startbuttonISR(){
+  startPress = true;
+}
+
+
 
