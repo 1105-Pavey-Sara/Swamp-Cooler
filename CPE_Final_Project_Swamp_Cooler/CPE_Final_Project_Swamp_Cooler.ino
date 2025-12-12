@@ -1,12 +1,14 @@
+//To do: Implement all code related to the fan, clock (1 minute delays using millis(), etc) and LCD. Have yet to test that this actually works on the circuit.
+
 //Sara Pavey and Luka Wozniak
 //CPE Swamp Cooler Final Project
 //12-12-2025
 #include <LiquidCrystal.h>
-#include <Stepper.h>
-#include <DHT.h>
-#include <DHT_U.h>
+#include <Stepper.h> //fan
+#include <DHT.h> //temperature
+#include <DHT_U.h> //temperature
 #include <RTClib.h>
-#include <Keypad.h>
+#include <Keypad.h> //matrix keypad used for stop and reset buttons
 
 #define RDA 0x80
 #define TBE 0x20  
@@ -14,13 +16,17 @@
 #define TEMP_ADC_CH 1
 #define WATER_ADC_CH 2
 
+#define DHTPIN 46
+#define DHTTYPE DHT11
+
 #define WATER_THRESHOLD 250 //chosen to mimic lab 8
+#define TEMP_THRESHOLD 25.0 //in Celsius, chosen to be somewhat above temp of my colder room
 
 volatile unsigned char *myUCSR0A = (unsigned char *)0x00C0;
 volatile unsigned char *myUCSR0B = (unsigned char *)0x00C1;
 volatile unsigned char *myUCSR0C = (unsigned char *)0x00C2;
-volatile unsigned int  *myUBRR0  = (unsigned int *) 0x00C4;
-volatile unsigned char *myUDR0   = (unsigned char *)0x00C6;
+volatile unsigned int  *myUBRR0 = (unsigned int *) 0x00C4;
+volatile unsigned char *myUDR0 = (unsigned char *)0x00C6;
  
 volatile unsigned char* my_ADMUX = (unsigned char*) 0x7C;
 volatile unsigned char* my_ADCSRB = (unsigned char*) 0x7B;
@@ -40,6 +46,7 @@ volatile unsigned char* port_a = (unsigned char*) 0x22;
 volatile unsigned char* ddr_f = (unsigned char*) 0x30;
 volatile unsigned char* port_f = (unsigned char*) 0x31;
 
+DHT dht(DHTPIN, DHTTYPE); //temperature
 
 volatile bool startPress = false; //start button
 const byte ROWS = 4; 
@@ -55,7 +62,7 @@ byte colPins[COLS] = {38, 40, 42, 44};
 Keypad keypad = Keypad(makeKeymap(startKeypad), rowPins, colPins, ROWS, COLS);
 
 typedef enum {DISABLED, IDLE, ERROR, RUNNING} state;
-volatile STATE activeState = DISABLED; //System will not start off running the cooler 
+volatile state activeState = DISABLED; //System will not start off running the cooler 
 
 void adc_init();
 unsigned int adc_read(unsigned char);
@@ -63,6 +70,10 @@ void U0putchar(unsigned char);
 void U0init(int);
 void setLED(state);
 void startbuttonISR();
+unsigned int getWaterLevel();
+bool waterThreshold();
+float getTemperature();
+bool tempThreshold();
 
 void setup() {
   *ddr_b |= (1 << PB7); //configure pin 13 as output, IN4
@@ -88,8 +99,10 @@ void setup() {
   adc_init();
 
   *ddr_e &= ~(1 << PE4); //configure pin 2 as input, Start ISR Button
-  attachInterrupt(digitalPinToInterrupt(2), startISR, FALLING);
+  *port_e |= (1 << PE4); //pullup, implemented with code instead of resistor since board was crowded
+  attachInterrupt(digitalPinToInterrupt(2), startbuttonISR, FALLING);
 
+  dht.begin();
 }
 
 void loop() {
@@ -99,7 +112,7 @@ void loop() {
     activeState = DISABLED;
   }
   else if(activeState == ERROR && k == '2'){ //2 = Reset button
-    if (/*write code: check if water above threshold*/){
+    if (waterThreshold()){
       activeState = IDLE;
     } 
   }
@@ -113,13 +126,28 @@ void loop() {
       break;
     case IDLE:
       setLED(activeState); //set LED to green
-      /* if/else statement with water level input, if too low, change to error state*/
+      if (!waterThreshold()){
+        activeState = ERROR;
+        /*add these later: fanOff(), LCD error message, RTC timestamp*/
+      }
+      else if(tempThreshold()){ /* may need to add checking water threshold to logic? will check physically later*/
+        activeState = RUNNING;
+      }
       break;
     case ERROR:
       setLED(activeState); //set LED to red
+      if(/*write code to link this with button for reset above*/ && waterThreshold()) {
+        activeState = IDLE;
+      }
       break;
     case RUNNING:
       setLED(activeState); //set LED to blue
+      if (!waterThreshold()){
+        activeState = ERROR;
+        /*add these later: fanOff(), LCD error message, RTC timestamp*/
+      }else if(!tempThreshold()){ /* may need to add checking water threshold to logic? will check physically later*/
+        activeState = IDLE;
+      }
       break;
   }
 }
@@ -196,8 +224,28 @@ void setLED(state ledstate){
 }
 
 void startbuttonISR(){
+
   startPress = true;
 }
 
+unsigned int getWaterLevel(){
 
+    return adc_read(WATER_ADC_CH);
+}
 
+bool waterThreshold(){ //return true if water is at or above threshold
+
+  return (getWaterLevel() >= WATER_THRESHOLD);
+}
+
+float getTemperature(){
+
+  float temp = dht.readTemperature();
+  return temp;
+}
+
+bool tempThreshold(){ //return true if temp is at or above threshold
+
+  float temp1 = getTemperature();
+  return (t >= TEMP_THRESHOLD);
+}
