@@ -64,9 +64,14 @@ Keypad keypad = Keypad(makeKeymap(startKeypad), rowPins, colPins, ROWS, COLS);
 typedef enum {DISABLED, IDLE, ERROR, RUNNING} state;
 volatile state activeState = DISABLED; //System will not start off running the cooler 
 
+unsigned long previousMillis = 0;  // will store last time LED was updated. Code snippet from ArduinoDocs
+const unsigned long interval = 60000;  // interval at which to blink (milliseconds); 60000 ms = 1min
+
 void adc_init();
 unsigned int adc_read(unsigned char);
 void U0putchar(unsigned char);
+static void U0putint_recursive(unsigned int);
+void U0putint(unsigned int);
 void U0init(int);
 void setLED(state);
 void startbuttonISR();
@@ -75,10 +80,12 @@ bool waterThreshold();
 float getTemperature();
 bool tempThreshold();
 float getHumidity();
-void displayLCDInfo();
+void displayLCDInfo(state);
 void fanOff();
 void fanOn();
-void stateUpdate(state);
+void updateState(state);
+void logMotor();
+void logTime();
 
 void setup() {
   *ddr_b |= (1 << PB7); //configure pin 13 as output, IN4
@@ -138,21 +145,17 @@ void loop() {
       break;
     case IDLE: 
       if (!waterThreshold()){
-        updateState(ERROR)
+        updateState(ERROR);
         /*add these later: RTC timestamp*/
       }
       else if(tempThreshold()){ 
-        updateState(RUNNING)
+        updateState(RUNNING);
       }
-      displayLCDInfo();
+      displayLCDInfo(activeState);
       break;
     case ERROR:
       //Error message
-      lcd.clear();
-      lcd.setCursor(0,0);
-      lcd.print("Error:");
-      lcd.setCursor(0,1);
-      lcd.print("Low Water");
+      displayLCDInfo(activeState);
       break;
     case RUNNING:
       if (!waterThreshold()){
@@ -161,8 +164,16 @@ void loop() {
       }else if(!tempThreshold()){ 
         updateState(IDLE);
       }
-      displayLCDInfo();
+      displayLCDInfo(activeState);
       break;
+  }
+  //ArduinoDocs: Minute Loop
+  if (activeState != DISABLED){
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= LCD_INTERVAL){
+      previousMillis = currentMillis;
+      displayLCDInfo(activeState);
+    }
   }
 }
 
@@ -203,6 +214,24 @@ void U0putchar(unsigned char U0pdata){
 
   while((*myUCSR0A & TBE)==0);
   *myUDR0 = U0pdata;
+}
+
+static void U0putint_recursive(unsigned int n){ //lab 8 printing
+
+    if (n == 0) {
+        return;
+    }
+    U0putint_rec(n / 10);
+    U0putchar((n % 10) + '0');
+}
+
+void U0putint(unsigned int n1){
+
+    if (n1 == 0) {
+        U0putchar('0');
+        return;
+    }
+    U0putint_rec(n1);
 }
 
 void U0init(int U0baud){
@@ -261,7 +290,7 @@ float getTemperature(){
 bool tempThreshold(){ //return true if temp is at or above threshold
 
   float temp1 = getTemperature();
-  if (isnan(temp)) return -50.0; //failed sensor value
+  if (isnan(temp1)) return false; //failed sensor value
   return (temp1 >= TEMP_THRESHOLD);
 }
 
@@ -271,17 +300,24 @@ float getHumidity(){
 
   if (isnan(hum)) return -1.0; //failed sensor value
 
-  return huml;
+  return hum;
 }
 
-void displayLCDInfo(){
+void displayLCDInfo(state infoState){
   lcd.clear();
   lcd.setCursor(0,0);
+  if(infoState == ERROR){
+      lcd.print("Error:");
+      lcd.setCursor(0,1);
+      lcd.print("Low Water");
+
+      return;
+  }
   lcd.print("Temp: ");
   lcd.print(getTemperature());
   lcd.print("°C");
   lcd.setCursor(0,1);
-  lcd.print("Humidity: ");
+  lcd.print("Humid.: ");
   lcd.print(getHumidity());
   lcd.print("%");
 }
@@ -291,18 +327,19 @@ void fanOff(){
   *port_h &= ~(1 << PH6); //Send a zero to pin 9 turning the motor off
 }
 
-void fanON(){
+void fanOn(){
 
   *port_h |= (1 << PH6); //Send a 1 to pin 9 turning the motor on
 }
 
-void stateUpdate(state new){
+void updateState(state new){
 
   if(activeState == new){
     return;
   }
 
-  DateTime now = rtc.now();
+  logTime();
+
   U0putchar('S');
   U0putchar('t');
   U0putchar('a');
@@ -327,14 +364,53 @@ void stateUpdate(state new){
   }
 
   U0putchar('\n');
-  void setLED(state new);
+  setLED(new);
 
   if(new == RUNNING){
     fanOn();
+    logMotor();
+    U0putchar('O');
+    U0putchar('n');
+    U0putchar('\n');
   }
-  else{
+  else if (activeState == RUNNING && new != RUNNING){ //Only turn the fan off if it's on since this affects motor logs
     fanOff();
+    logMotor();
+    U0putchar('o');
+    U0putchar('f');
+    U0putchar('f');
+    U0putchar('\n');
   }
 
   activeState = new;
+}
+
+void logMotor(){
+
+  U0putchar('M');
+  U0putchar('o');
+  U0putchar('t');
+  U0putchar('o');
+  U0putchar('r');
+  U0putchar(':');
+  U0putchar(' ');
+}
+
+void logTime(){
+
+  DateTime now = rtc.now();
+
+  U0putint(now.year());
+  U0putchar('-');
+  U0putint(now.month());
+  U0putchar('-');
+  U0putint(now.day());
+  U0putchar(' ');
+
+  U0putint(now.hour());
+  U0putchar(':');
+  U0putint(now.minute());
+  U0putchar(':');
+  U0putint(now.second());
+  U0putchar('\n');
 }
