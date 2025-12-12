@@ -46,6 +46,7 @@ volatile unsigned char* port_f = (unsigned char*) 0x31;
 
 LiquidCrystal lcd(8, 7, 6, 5, 4, 3); //Setup LCD in 4 pin mode
 DHT dht(DHTPIN, DHTTYPE); //temperature
+int motorstate = 0; //Set the stepper motor state to zero
 RTC_DS1307 rtc; //clock
 
 volatile bool startPress = false; //start button
@@ -86,6 +87,7 @@ void fanOn();
 void updateState(state);
 void logMotor();
 void logTime();
+void stepMotor(char k);
 
 void setup() {
   *ddr_b |= (1 << PB7); //configure pin 13 as output, IN4
@@ -106,6 +108,10 @@ void setup() {
   *ddr_f &= ~(1 << PF1); // configure pin A1 as input, temp sensor
   *ddr_f &= ~(1 << PF2); //configure pin A2 as input, water sensor data/S
 
+  *port_b |= (1 << PB7); //Send a 1 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB6); //Send a 0 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB5); //Send a 0 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB4); //Send a 0 to set stepper motor to 0 position
   lcd.begin(16, 2); //clear and set position to (0,0)
 
   U0init(9600);
@@ -127,6 +133,7 @@ void setup() {
 
 void loop() {
   char k = keypad.getKey();
+  char lastk = 0;
   if (k == '1'){ //1 = Stop button: turn motor off (if on) and disable system
     updateState(DISABLED);
   }
@@ -152,10 +159,16 @@ void loop() {
         updateState(RUNNING);
       }
       displayLCDInfo(activeState);
+     if(k != lastk && lastk == 0){ //If a new button press on keypad run step motor function
+      stepMotor(k);
+     }
       break;
     case ERROR:
       //Error message
       displayLCDInfo(activeState);
+      if(k != lastk && lastk == 0){ //If a new button press on keypad run step motor function
+      stepMotor(k);
+      }
       break;
     case RUNNING:
       if (!waterThreshold()){
@@ -165,6 +178,9 @@ void loop() {
         updateState(IDLE);
       }
       displayLCDInfo(activeState);
+     if(k != lastk && lastk == 0){ //If a new button press on keypad run step motor function
+      stepMotor(k);
+     }
       break;
   }
   //ArduinoDocs: Minute Loop
@@ -413,4 +429,37 @@ void logTime(){
   U0putchar(':');
   U0putint(now.second());
   U0putchar('\n');
+}
+
+void stepMotor(char k){
+  if(k == '3'){
+   motorstate += 1;
+  } 
+  if(k == '4'){
+   motorstate -= 1;
+  }
+ if(motorstate == 0){
+  *port_b |= (1 << PB7); //Send a 1 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB6); //Send a 0 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB5); //Send a 0 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB4); //Send a 0 to set stepper motoe to 0 position
+ }
+ if(motorstate == 0){
+  *port_b &= ~(1 << PB7); //Send a 0 to set stepper motor to 0 position
+  *port_b |= (1 << PB6); //Send a 1 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB5); //Send a 0 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB4); //Send a 0 to set stepper motor to 0 position
+ }
+ if(motorstate == 0){
+  *port_b &= ~(1 << PB7); //Send a 0 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB6); //Send a 0 to set stepper motor to 0 position
+  *port_b |= (1 << PB5); //Send a 1 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB4); //Send a 0 to set stepper motor to 0 position
+ }
+ if(motorstate == 0){
+  *port_b &= ~(1 << PB7); //Send a 0 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB6); //Send a 0 to set stepper motor to 0 position
+  *port_b &= ~(1 << PB5); //Send a 0 to set stepper motor to 0 position
+  *port_b |= (1 << PB4); //Send a 1 to set stepper motor to 1 position
+ }
 }
