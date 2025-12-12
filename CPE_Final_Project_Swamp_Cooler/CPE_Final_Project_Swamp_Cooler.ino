@@ -1,13 +1,11 @@
-//To do: Implement all code related to the fan, clock (1 minute delays using millis(), etc) and LCD. Have yet to test that this actually works on the circuit.
-
 //Sara Pavey and Luka Wozniak
 //CPE Swamp Cooler Final Project
 //12-12-2025
-#include <LiquidCrystal.h>
+#include <LiquidCrystal.h> //lcd
 #include <Stepper.h> //fan
 #include <DHT.h> //temperature
 #include <DHT_U.h> //temperature
-#include <RTClib.h>
+#include <RTClib.h> //clock/time
 #include <Keypad.h> //matrix keypad used for stop and reset buttons
 
 #define RDA 0x80
@@ -46,7 +44,9 @@ volatile unsigned char* port_a = (unsigned char*) 0x22;
 volatile unsigned char* ddr_f = (unsigned char*) 0x30;
 volatile unsigned char* port_f = (unsigned char*) 0x31;
 
+LiquidCrystal lcd(8, 7, 6, 5, 4, 3); //Setup LCD in 4 pin mode
 DHT dht(DHTPIN, DHTTYPE); //temperature
+RTC_DS1307 rtc; //clock
 
 volatile bool startPress = false; //start button
 const byte ROWS = 4; 
@@ -74,6 +74,11 @@ unsigned int getWaterLevel();
 bool waterThreshold();
 float getTemperature();
 bool tempThreshold();
+float getHumidity();
+void displayLCDInfo();
+void fanOff();
+void fanOn();
+void stateUpdate(state);
 
 void setup() {
   *ddr_b |= (1 << PB7); //configure pin 13 as output, IN4
@@ -93,8 +98,8 @@ void setup() {
   *ddr_a |= (1 << PA6); // configure pin 28 as output, green LED
   *ddr_f &= ~(1 << PF1); // configure pin A1 as input, temp sensor
   *ddr_f &= ~(1 << PF2); //configure pin A2 as input, water sensor data/S
- LiquidCrystal(8, 7, 6, 5, 4, 3); //Setup LCD in 4 pin mode
- lcd.begin(16, 2); //clear and set position to (0,0)
+
+  lcd.begin(16, 2); //clear and set position to (0,0)
 
   U0init(9600);
 
@@ -105,62 +110,58 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(2), startbuttonISR, FALLING);
 
   dht.begin();
+
+  if (!rtc.begin()) {
+    lcd.print("Clock Error");
+  }
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); //Comment out after first successful upload of sketch
+
 }
 
 void loop() {
   char k = keypad.getKey();
   if (k == '1'){ //1 = Stop button: turn motor off (if on) and disable system
-    /*code to turn off fan, make function*/
-    activeState = DISABLED;
+    updateState(DISABLED);
   }
   else if(activeState == ERROR && k == '2'){ //2 = Reset button
     if (waterThreshold()){
-      activeState = IDLE;
+      updateState(IDLE);
     } 
   }
   switch(activeState){
     case DISABLED:
-      setLED(activeState); //set LED to yellow
+      lcd.clear(); //no reporting and no error message
       if(startPress){
         startPress = false;
-        activeState = IDLE;
+        updateState(IDLE);
       }
-    *port_h &= ~(1 << PH6); //Send a zero to pin 9 turning the motor off
-     
       break;
-    case IDLE:
-      setLED(activeState); //set LED to green
+    case IDLE: 
       if (!waterThreshold()){
-        activeState = ERROR;
-        /*add these later: fanOff(), LCD error message, RTC timestamp*/
+        updateState(ERROR)
+        /*add these later: RTC timestamp*/
       }
-      else if(tempThreshold()){ /* may need to add checking water threshold to logic? will check physically later*/
-        activeState = RUNNING;
+      else if(tempThreshold()){ 
+        updateState(RUNNING)
       }
-     *port_h &= ~(1 << PH6); //Send a zero to pin 9 turning the motor off
-     lcd.print(getTemperature()); //Display the temperature in the top left corner
-     lcd.setCursor(0, 1); //Set Cursor to second row
-     //lcd.print(Humidity) // Print whatever the humidity level is
+      displayLCDInfo();
       break;
     case ERROR:
-      setLED(activeState); //set LED to red
-      if(/*write code to link this with button for reset above*/ && waterThreshold()) {
-        activeState = IDLE;
-      }
-     *port_h &= ~(1 << PH6); //Send a zero to pin 9 turning the motor off
+      //Error message
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("Error:");
+      lcd.setCursor(0,1);
+      lcd.print("Low Water");
       break;
     case RUNNING:
-      setLED(activeState); //set LED to blue
       if (!waterThreshold()){
-        activeState = ERROR;
-        /*add these later: fanOff(), LCD error message, RTC timestamp*/
-      }else if(!tempThreshold()){ /* may need to add checking water threshold to logic? will check physically later*/
-        activeState = IDLE;
+        updateState(ERROR);
+        /*add these later: RTC timestamp*/
+      }else if(!tempThreshold()){ 
+        updateState(IDLE);
       }
-     *port_h |= (1 << PH6); //Send a 1 to pin 9 turning the motor on
-     lcd.print(getTemperature()); //Display the temperature in the top left corner
-     lcd.setCursor(0, 1); //Set Cursor to second row
-     //lcd.print(Humidity) // Print whatever the humidity level is
+      displayLCDInfo();
       break;
   }
 }
@@ -260,5 +261,80 @@ float getTemperature(){
 bool tempThreshold(){ //return true if temp is at or above threshold
 
   float temp1 = getTemperature();
-  return (t >= TEMP_THRESHOLD);
+  if (isnan(temp)) return -50.0; //failed sensor value
+  return (temp1 >= TEMP_THRESHOLD);
+}
+
+float getHumidity(){
+
+  float hum = dht.readHumidity();
+
+  if (isnan(hum)) return -1.0; //failed sensor value
+
+  return huml;
+}
+
+void displayLCDInfo(){
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Temp: ");
+  lcd.print(getTemperature());
+  lcd.print("°C");
+  lcd.setCursor(0,1);
+  lcd.print("Humidity: ");
+  lcd.print(getHumidity());
+  lcd.print("%");
+}
+
+void fanOff(){
+
+  *port_h &= ~(1 << PH6); //Send a zero to pin 9 turning the motor off
+}
+
+void fanON(){
+
+  *port_h |= (1 << PH6); //Send a 1 to pin 9 turning the motor on
+}
+
+void stateUpdate(state new){
+
+  if(activeState == new){
+    return;
+  }
+
+  DateTime now = rtc.now();
+  U0putchar('S');
+  U0putchar('t');
+  U0putchar('a');
+  U0putchar('t');
+  U0putchar('e');
+  U0putchar(':');
+  U0putchar(' ');
+
+  switch(new){
+    case DISABLED:
+      U0putchar('D');
+      break;
+    case IDLE:
+      U0putchar('I');
+      break;
+    case ERROR:
+      U0putchar('E');
+      break;
+    case RUNNING:
+      U0putchar('R');
+      break;
+  }
+
+  U0putchar('\n');
+  void setLED(state new);
+
+  if(new == RUNNING){
+    fanOn();
+  }
+  else{
+    fanOff();
+  }
+
+  activeState = new;
 }
