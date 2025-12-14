@@ -1,6 +1,23 @@
 //Sara Pavey and Luka Wozniak
 //CPE Swamp Cooler Final Project
 //12-12-2025
+
+/*#include <LiquidCrystal.h>
+LiquidCrystal lcd(8,7,6,5,4,3);
+
+void setup() {
+
+  pinMode(8, OUTPUT);
+pinMode(7, OUTPUT);
+pinMode(6, OUTPUT);
+pinMode(5, OUTPUT);
+pinMode(4, OUTPUT);
+pinMode(3, OUTPUT);
+
+  lcd.begin(16,1);
+  lcd.print("hello, world!");
+}
+void loop() {}*/
 #include <LiquidCrystal.h> //lcd
 #include <DHT.h> //temperature
 #include <DHT_U.h> //temperature
@@ -10,14 +27,13 @@
 #define RDA 0x80
 #define TBE 0x20  
 
-#define TEMP_ADC_CH 1
 #define WATER_ADC_CH 2
 
 #define DHTPIN 46
 #define DHTTYPE DHT11
 
-#define WATER_THRESHOLD 250 //chosen to mimic lab 8
-#define TEMP_THRESHOLD 25.0 //in Celsius, chosen to be somewhat above temp of my colder room
+#define WATER_THRESHOLD 3 //chosen to mimic lab 8
+#define TEMP_THRESHOLD 24.0 //in Celsius, chosen to be somewhat above temp of my colder room
 
 volatile unsigned char *myUCSR0A = (unsigned char *)0x00C0;
 volatile unsigned char *myUCSR0B = (unsigned char *)0x00C1;
@@ -43,6 +59,8 @@ volatile unsigned char* port_a = (unsigned char*) 0x22;
 volatile unsigned char* ddr_f = (unsigned char*) 0x30;
 volatile unsigned char* port_f = (unsigned char*) 0x31;
 
+//const int RS = 8, EN = 7, D4 = 6, D5 = 5, D6 = 4, D7 = 3;
+//LiquidCrystal lcd(RS, EN, D4, D5, D6, D7); //Setup LCD in 4 pin mode
 LiquidCrystal lcd(8, 7, 6, 5, 4, 3); //Setup LCD in 4 pin mode
 DHT dht(DHTPIN, DHTTYPE); //temperature
 int motorstate = 0; //Set the stepper motor state to zero
@@ -61,21 +79,21 @@ byte rowPins[ROWS] = {30, 32, 34, 36};
 byte colPins[COLS] = {38, 40, 42, 44};
 Keypad keypad = Keypad(makeKeymap(startKeypad), rowPins, colPins, ROWS, COLS);
 
-typedef enum {DISABLED, IDLE, ERROR, RUNNING} state;
+typedef enum state {DISABLED, IDLE_STATE, ERROR, RUNNING} state;
 volatile state activeState = DISABLED; //System will not start off running the cooler 
 
 unsigned long previousMillis = 0;  // will store last time LED was updated. Code snippet from ArduinoDocs
-const unsigned long interval = 60000;  // interval at which to blink (milliseconds); 60000 ms = 1min
+const unsigned long interval = 6000;  // interval at which to blink (milliseconds); 60000 ms = 1min change back later
 
 void adc_init();
-unsigned int adc_read(unsigned char);
+int adc_read(char);
 void U0putchar(unsigned char);
 static void U0putint_recursive(unsigned int);
 void U0putint(unsigned int);
 void U0init(int);
 void setLED(state);
 void startbuttonISR();
-unsigned int getWaterLevel();
+int getWaterLevel();
 bool waterThreshold();
 float getTemperature();
 bool tempThreshold();
@@ -99,7 +117,7 @@ void setup() {
   *ddr_h |= (1 << PH3); //configure pin 6 as output, LCD D4
   *ddr_e |= (1 << PE3); //configure pin 5 as output, LCD D5
   *ddr_g |= (1 << PG5); //configure pin 4 as output, LCD D6
-  *ddr_e |= (1 << PE5); //configure pin 3 as output, LCD D7
+  *ddr_e |= (1 << PE5); //configure pin 3 as output, LCD D7 
   *ddr_a |= (1 << PA0); // configure pin 22 as output, blue LED
   *ddr_a |= (1 << PA2); // configure pin 24 as output, red LED
   *ddr_a |= (1 << PA4); // configure pin 26 as output, yellow LED
@@ -127,10 +145,12 @@ void setup() {
     lcd.print("Clock Error");
   }
   rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); //Comment out after first successful upload of sketch
+  setLED(DISABLED);
 
 }
 
 void loop() {
+  //Serial.println(activeState);
   char k = keypad.getKey();
   static char lastk = 0;
   if (k == '1'){ //1 = Stop button: turn motor off (if on) and disable system
@@ -138,7 +158,7 @@ void loop() {
   }
   else if(activeState == ERROR && k == '2'){ //2 = Reset button
     if (waterThreshold()){
-      updateState(IDLE);
+      updateState(IDLE_STATE);
     } 
   }
   switch(activeState){
@@ -146,17 +166,23 @@ void loop() {
       lcd.clear(); //no reporting and no error message
       if(startPress){
         startPress = false;
-        updateState(IDLE);
+        Serial.println("Time to switch from disabled to idle!");
+        updateState(IDLE_STATE);
       }
       break;
-    case IDLE: 
+    case IDLE_STATE: 
+      int storeTest = getWaterLevel();
+      Serial.println("Current water level!!!: ");
+      Serial.println(storeTest);
+      Serial.println("Water thresh: ");
+      Serial.println(WATER_THRESHOLD);
       if (!waterThreshold()){
+        Serial.println("No! Not enough water!");
         updateState(ERROR);
       }
       else if(tempThreshold()){ 
         updateState(RUNNING);
       }
-      displayLCDInfo(activeState);
       if (k != 0 && k != lastk){//If a new button press on keypad run step motor function
         stepMotor(k);
         lastk = k;
@@ -167,8 +193,6 @@ void loop() {
 
       break;
     case ERROR:
-      //Error message
-      displayLCDInfo(activeState);
       if (k != 0 && k != lastk){//If a new button press on keypad run step motor function
         stepMotor(k);
         lastk = k;
@@ -178,12 +202,16 @@ void loop() {
       }
       break;
     case RUNNING:
+        int storeTest2 = getWaterLevel();
+        Serial.println("XCurrent water level!!!: ");
+        Serial.println(storeTest2);
+        Serial.println("XWater thresh: ");
+        Serial.println(WATER_THRESHOLD);
       if (!waterThreshold()){
         updateState(ERROR);
       }else if(!tempThreshold()){ 
-        updateState(IDLE);
+        updateState(IDLE_STATE);
       }
-      displayLCDInfo(activeState);
       if (k != 0 && k != lastk){//If a new button press on keypad run step motor function
         stepMotor(k);
         lastk = k;
@@ -203,12 +231,14 @@ void loop() {
   }
 }
 
-void adc_init(){
+/*void adc_init(){
 
   *my_ADCSRA |= 0b10000000; //Enable ADC
   *my_ADCSRA &= 0b11011111; //Disable auto-trigger
   *my_ADCSRA &= 0b11110111; //Disable ADC interrupt
   *my_ADCSRA &= 0b11111000; //Set prescaler to 2
+  //*my_ADCSRA = (*my_ADCSRA & 0b11111000) | 0b00000111; // prescaler = 128
+
 
   *my_ADCSRB &= 0b11110111;
   *my_ADCSRB &= 0b11111000;
@@ -217,23 +247,23 @@ void adc_init(){
   *my_ADMUX |= 0b01000000;
   *my_ADMUX &= 0b11011111;
   *my_ADMUX &= 0b11100000;
+}*/
+
+void adc_init()
+{
+  ADMUX = (1 << REFS0);
+  ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
 }
 
-unsigned int adc_read(unsigned char adc_channel_num) {
+int adc_read(int channelnum) {
 
-  *my_ADMUX &= 0b11100000; // clear the channel selection bits (MUX 4:0)
+  ADMUX = (ADMUX & 0xF8) | (channelnum & 0x07);
 
-  *my_ADCSRB &= 0b11011111; // clear the channel selection bits (MUX 5)
+  ADCSRA |= (1 << ADSC);
 
-  *my_ADMUX |= (adc_channel_num & 0x07); //for setting new channel
-  
-  *my_ADCSRA |= 0b01000000; // set bit 6 of ADCSRA to 1 to start a conversion
+  while (ADCSRA & (1 << ADSC));
 
-  while((*my_ADCSRA & 0x40) != 0); // wait for the conversion to complete
-  
-  my_ADC_DATA = (unsigned short *) 0x78; // return the result in the ADC data register and format the data based on right justification
-  unsigned int val = (*my_ADC_DATA & 0x03FF);
-  return val;
+  return (int)ADC;
 }
 
 void U0putchar(unsigned char U0pdata){
@@ -280,7 +310,7 @@ void setLED(state ledstate){
     case DISABLED:
       *port_a |= (1 << PA4); //yellow
       break;
-    case IDLE:
+    case IDLE_STATE:
       *port_a |= (1 << PA6); //green
       break;
     case ERROR:
@@ -292,24 +322,33 @@ void setLED(state ledstate){
   }
 }
 
-void startbuttonISR(){
-
-  startPress = true;
+void startbuttonISR() {
+  if (activeState == DISABLED) {
+    Serial.println("Time to start!");
+    startPress = true;
+  }
 }
 
-unsigned int getWaterLevel(){
 
-    return adc_read(WATER_ADC_CH);
+int getWaterLevel(){
+    int val = adc_read(WATER_ADC_CH);
+    Serial.println("Reported by getWaterLevel in the function: ");
+    Serial.println(val);
+    return val;
 }
+
 
 bool waterThreshold(){ //return true if water is at or above threshold
-
+  Serial.println("Check water threshold:");
+  Serial.println(getWaterLevel() >= WATER_THRESHOLD);
   return (getWaterLevel() >= WATER_THRESHOLD);
 }
 
 float getTemperature(){
 
   float temp = dht.readTemperature();
+  Serial.println("Temp:");
+  Serial.println(temp);
   return temp;
 }
 
@@ -330,23 +369,30 @@ float getHumidity(){
 }
 
 void displayLCDInfo(state infoState){
-  lcd.clear();
-  lcd.setCursor(0,0);
-  if(infoState == ERROR){
-      lcd.print("Error:");
-      lcd.setCursor(0,1);
-      lcd.print("Low Water");
+  static state lastState = DISABLED;
 
-      return;
+  if (infoState != lastState) {
+    lcd.clear();
+    lastState = infoState;
   }
-  lcd.print("Temp: ");
+
+  lcd.setCursor(0,0);
+
+  if(infoState == ERROR){
+    lcd.print("Error: Low Water");
+    return;
+  }
+
+  lcd.print("Temp:");
   lcd.print(getTemperature());
-  lcd.print("°C");
+  lcd.print("C ");
+
   lcd.setCursor(0,1);
-  lcd.print("Humid.: ");
+  lcd.print("Hum:");
   lcd.print(getHumidity());
-  lcd.print("%");
+  lcd.print("% ");
 }
+
 
 void fanOff(){
 
@@ -358,9 +404,9 @@ void fanOn(){
   *port_h |= (1 << PH6); //Send a 1 to pin 9 turning the motor on
 }
 
-void updateState(state new){
+void updateState(state newState){
 
-  if(activeState == new){
+  if(activeState == newState){
     return;
   }
 
@@ -374,11 +420,11 @@ void updateState(state new){
   U0putchar(':');
   U0putchar(' ');
 
-  switch(new){
+  switch(newState){
     case DISABLED:
       U0putchar('D');
       break;
-    case IDLE:
+    case IDLE_STATE:
       U0putchar('I');
       break;
     case ERROR:
@@ -390,16 +436,16 @@ void updateState(state new){
   }
 
   U0putchar('\n');
-  setLED(new);
+  setLED(newState);
 
-  if(new == RUNNING){
+  if(newState == RUNNING){
     fanOn();
     logMotor();
     U0putchar('O');
     U0putchar('n');
     U0putchar('\n');
   }
-  else if (activeState == RUNNING && new != RUNNING){ //Only turn the fan off if it's on since this affects motor logs
+  else if (activeState == RUNNING && newState != RUNNING){ //Only turn the fan off if it's on since this affects motor logs
     fanOff();
     logMotor();
     U0putchar('o');
@@ -408,7 +454,7 @@ void updateState(state new){
     U0putchar('\n');
   }
 
-  activeState = new;
+  activeState = newState;
 }
 
 void logMotor(){
